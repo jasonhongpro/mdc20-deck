@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>ArLin MDC-20</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Exo+2:wght@500..800&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  :root { --bg:#0d1a22; --panel:#152a35; --line:#24404e; --text:#eef3f6; --muted:#8fa0ab; --accent:#50c8f4; --err:#ff8a7a; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:'IBM Plex Sans', Arial, sans-serif; }
+  /* unlock screen */
+  #gate { min-height:100%; display:flex; align-items:center; justify-content:center; padding:24px 16px; }
+  #gate form { width:100%; max-width:400px; background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:32px 28px; display:flex; flex-direction:column; gap:16px; }
+  #gate h1 { margin:0; font-family:'Exo 2', Verdana, sans-serif; font-size:28px; font-weight:700; }
+  #gate h1 span { color:var(--accent); }
+  #gate p { margin:0; color:var(--muted); font-size:15px; line-height:1.5; }
+  #gate input { font:inherit; font-size:17px; padding:12px 14px; border-radius:10px; border:1px solid var(--line); background:#0b161d; color:var(--text); }
+  #gate input:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  #gate button { font:inherit; font-weight:600; font-size:17px; padding:12px; border:0; border-radius:10px; background:var(--accent); color:#06222f; cursor:pointer; }
+  #gate button:disabled { opacity:.6; cursor:wait; }
+  #msg { min-height:20px; font-size:14px; color:var(--err); }
+  /* viewer */
+  #viewer { display:none; position:fixed; inset:0; background:#000; overflow:hidden; touch-action:pan-y; }
+  #stage { position:absolute; left:50%; top:50%; width:1920px; height:1080px; transform-origin:0 0; }
+  #stage > section { position:absolute; left:0; top:0; width:1920px; height:1080px; overflow:hidden; display:none !important; }
+  #stage > section.on { display:var(--d) !important; }
+  #stage section * { margin:0; box-sizing:border-box; }
+  #stage section h1 { font-size:96px; font-weight:600; line-height:1.1; }
+  #stage section h2 { font-size:64px; font-weight:600; line-height:1.15; }
+  #stage section h3 { font-size:44px; font-weight:600; line-height:1.2; }
+  #stage section p { font-size:32px; line-height:1.4; }
+  #stage section ul, #stage section ol { padding-left:1.15em; }
+  #stage section li { margin-bottom:.2em; }
+  #stage section table { border-collapse:collapse; width:100%; }
+  #stage section th, #stage section td { padding:.35em .6em; text-align:left; border-bottom:1px solid rgba(127,140,150,.35); vertical-align:top; }
+  #stage section th { font-weight:600; }
+  #stage section img { display:block; }
+  #stage section aside { display:none; }
+  #bar { position:fixed; left:50%; bottom:12px; transform:translateX(-50%); display:flex; gap:8px; align-items:center; background:rgba(13,26,34,.82); border:1px solid var(--line); border-radius:999px; padding:6px 10px; font-size:14px; opacity:0; transition:opacity .3s; }
+  #viewer:hover #bar, #bar:focus-within, #viewer.touch #bar { opacity:1; }
+  #bar button { font:inherit; background:none; border:0; color:var(--text); padding:6px 10px; border-radius:999px; cursor:pointer; }
+  #bar button:hover { background:rgba(255,255,255,.1); }
+  #count { color:var(--muted); min-width:64px; text-align:center; font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+<main id="gate">
+  <form id="f" autocomplete="off">
+    <h1><span>A</span>rLin MDC-20</h1>
+    <p>Confidential investor presentation. Enter the password you were given.</p>
+    <input id="pw" type="password" aria-label="Password" placeholder="Password" autofocus required>
+    <button id="go" type="submit">Open deck</button>
+    <div id="msg" role="status"></div>
+  </form>
+</main>
+<div id="viewer" aria-roledescription="slide deck">
+  <div id="stage"></div>
+  <div id="bar">
+    <button id="prev" aria-label="Previous slide">&#8592;</button>
+    <span id="count"></span>
+    <button id="next" aria-label="Next slide">&#8594;</button>
+    <button id="fs" aria-label="Full screen">&#x26F6;</button>
+  </div>
+</div>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const msg = $("msg"), go = $("go");
+  let slides = [], cur = 0;
+
+  async function unlock(pw) {
+    const buf = new Uint8Array(await (await fetch("deck.enc", { cache: "no-store" })).arrayBuffer());
+    if (new TextDecoder().decode(buf.slice(0, 5)) !== "ARLN1") throw new Error("bad file");
+    const salt = buf.slice(5, 21), iv = buf.slice(21, 33), ct = buf.slice(33);
+    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveKey"]);
+    const key = await crypto.subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt, iterations: 600000 },
+                                              base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+    const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);   // throws on a wrong password
+    return JSON.parse(new TextDecoder().decode(plain));
+  }
+
+  function fit() {
+    const s = Math.min(innerWidth / 1920, innerHeight / 1080);
+    $("stage").style.transform = `scale(${s}) translate(-50%, -50%)`;
+  }
+
+  function show(i) {
+    cur = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach((el, k) => el.classList.toggle("on", k === cur));
+    $("count").textContent = `${cur + 1} / ${slides.length}`;
+    history.replaceState(null, "", "#" + (cur + 1));
+  }
+
+  function open(deck) {
+    document.title = deck.title;
+    const st = $("stage");
+    st.innerHTML = deck.slides.join("");
+    slides = [...st.querySelectorAll(":scope > section")].filter(s => !s.hasAttribute("hidden"));
+    slides.forEach(s => s.style.setProperty("--d", s.style.display || "block"));
+    $("gate").style.display = "none";
+    $("viewer").style.display = "block";
+    fit();
+    show((parseInt(location.hash.slice(1), 10) || 1) - 1);
+  }
+
+  $("f").addEventListener("submit", async e => {
+    e.preventDefault();
+    go.disabled = true; msg.textContent = ""; go.textContent = "Unlocking…";
+    try {
+      open(await unlock($("pw").value));
+      $("pw").value = "";
+    } catch (err) {
+      msg.textContent = "That password didn't work. Check it and try again.";
+      go.disabled = false; go.textContent = "Open deck";
+    }
+  });
+
+  addEventListener("resize", fit);
+  addEventListener("keydown", e => {
+    if (!slides.length) return;
+    if (["ArrowRight", "PageDown", " ", "Enter"].includes(e.key)) { e.preventDefault(); show(cur + 1); }
+    else if (["ArrowLeft", "PageUp", "Backspace"].includes(e.key)) { e.preventDefault(); show(cur - 1); }
+    else if (e.key === "Home") show(0);
+    else if (e.key === "End") show(slides.length - 1);
+    else if (e.key === "f" || e.key === "F") toggleFs();
+  });
+  $("prev").onclick = e => { e.stopPropagation(); show(cur - 1); };
+  $("next").onclick = e => { e.stopPropagation(); show(cur + 1); };
+  function toggleFs() {
+    if (document.fullscreenElement) document.exitFullscreen(); else $("viewer").requestFullscreen?.();
+  }
+  $("fs").onclick = e => { e.stopPropagation(); toggleFs(); };
+  $("viewer").addEventListener("click", e => { if (e.target.closest("#bar")) return; show(cur + (e.clientX > innerWidth / 2 ? 1 : -1)); });
+  let x0 = null;
+  $("viewer").addEventListener("touchstart", e => { x0 = e.touches[0].clientX; $("viewer").classList.add("touch"); }, { passive: true });
+  $("viewer").addEventListener("touchend", e => {
+    if (x0 === null) return;
+    const dx = e.changedTouches[0].clientX - x0; x0 = null;
+    if (Math.abs(dx) > 40) show(cur + (dx < 0 ? 1 : -1));
+  });
+})();
+</script>
+</body>
+</html>
